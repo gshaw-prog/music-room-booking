@@ -2,8 +2,9 @@
 import { APP, RULES, SLOT_GROUPS, ROLES, EMAIL } from './config.js';
 import * as api from './api.js';
 import { DEMO_ACCOUNTS } from './seed.js';
-import { slotsForDate, slotForGroup, getSlot, bookableDays, lastBookableDate } from './rules.js';
+import { slotsForDate, slotForGroup, getSlot, bookableDays, lastBookableDate, canManage as roleCanManage } from './rules.js';
 import { toISO, addDays, weekStart, weekday, fmtShort, fmtLong, fmtStamp, atTime } from './dates.js';
+import { heroStaff, authBanner, successNotes, footerArt } from './art.js';
 
 const $app = document.getElementById('app');
 const $top = document.getElementById('topbar');
@@ -13,7 +14,8 @@ let roomsCache = null;
 // ── Utilities ────────────────────────────────────────────────
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const isStaff = () => me && (me.role === 'teacher' || me.role === 'admin');
-const canBook = () => me && RULES.bookingRoles.includes(me.role);
+const canBook = () => me && RULES.bookingRoles.includes(me.role);   // books for self, under the rules
+const canManage = () => roleCanManage(me);                           // books for anyone, cancels any booking
 const today = () => toISO(new Date());
 const go = (path) => { const h = '#' + path; if (location.hash === h) render(); else location.hash = h; };
 const timeLabel = (s) => `${s.start}–${s.end}`;
@@ -78,7 +80,7 @@ const routes = {
   'schedule/:id':    { view: viewSchedule },
   'rooms':           { view: viewRooms },
   'rooms/:id':       { view: viewRoom },
-  'my':              { view: viewMy, roles: RULES.bookingRoles },
+  'my':              { view: viewMy, roles: [...RULES.bookingRoles, ...RULES.manageRoles] },
   'emails':          { view: viewMyEmails },
   'admin/users':     { view: viewUsers, roles: ['admin'] },
   'admin/rooms':     { view: viewRoomEditor, roles: ['admin'] },
@@ -117,7 +119,7 @@ async function render() {
 function renderTopbar(key) {
   if (!me) { $top.innerHTML = `<div class="topbar-inner"><a class="brand" href="#/login">${brandMark()}<span>${esc(APP.name)}</span></a></div>`; return; }
   const links = [['', 'Home']];
-  if (canBook()) links.push(['book', 'Book a room'], ['my', 'My bookings']);
+  if (canBook() || canManage()) links.push(['book', 'Book a room'], ['my', 'My bookings']);
   else links.push(['book', 'Availability']);
   links.push(['schedule', 'Schedules'], ['rooms', 'Rooms']);
   if (me.role === 'admin') links.push(['admin/users', 'Users'], ['admin/rooms', 'Room info'], ['admin/emails', 'Email log'], ['admin/data', 'Data']);
@@ -146,6 +148,7 @@ function brandMark() {
 // ── Login / password ─────────────────────────────────────────
 async function viewLogin() {
   $app.innerHTML = `<div class="auth-wrap"><div class="card auth">
+    ${authBanner()}
     <h1>Sign in</h1><p class="muted">${esc(APP.school)}</p>
     <form id="loginForm" class="form">
       <label>Email<input name="email" type="email" autocomplete="username" required></label>
@@ -204,7 +207,7 @@ async function viewHome() {
     const upcoming = mine.filter((b) => b.status === 'confirmed' && atTime(b.date, getSlot(b.slotId).end) > now)
       .sort(byWhen);
     $app.innerHTML = `
-      <section class="hero"><div><h1>Hi ${esc(first)}</h1>
+      <section class="hero">${heroStaff()}<div><h1>Hi ${esc(first)}</h1>
         <p class="muted">Book a practice room or classroom up to ${RULES.maxDaysAhead} days ahead. Bookings are confirmed instantly.</p></div>
         <a class="btn primary lg" href="#/book">Book a room</a></section>
       <div class="quota" aria-label="Your booking allowance">
@@ -225,9 +228,9 @@ async function viewHome() {
   const day = days[0] || today();
   const [bookings, s] = await Promise.all([api.listBookings({ from: day, to: day }), api.stats()]);
   $app.innerHTML = `
-    <section class="hero"><div><h1>Hi ${esc(first)}</h1>
-      <p class="muted">${me.role === 'admin' ? 'Manage users, room information and bookings.' : 'View room schedules and booking details.'}</p></div>
-      <a class="btn primary lg" href="#/schedule">View schedules</a></section>
+    <section class="hero">${heroStaff()}<div><h1>Hi ${esc(first)}</h1>
+      <p class="muted">${me.role === 'admin' ? 'Manage users, room information and bookings.' : 'Book rooms for students, and view or cancel bookings.'}</p></div>
+      <div class="actions">${canManage() ? '<a class="btn primary lg" href="#/book">Book a room</a>' : ''}<a class="btn ${canManage() ? 'ghost' : 'primary'} lg" href="#/schedule">View schedules</a></div></section>
     <p class="lede">${plural(s.upcoming, 'upcoming booking')} across ${rs.length} rooms. ${plural(s.students, 'student')} ${s.students === 1 ? 'has' : 'have'} an account.</p>
     <section class="card"><div class="card-head"><h2>${day === today() ? 'Today' : fmtLong(day)}</h2><a href="#/book?date=${day}">See all of that day</a></div>
       ${dayGrid(day, rs, bookings)}</section>`;
@@ -250,7 +253,7 @@ function dayGrid(date, rs, bookings, { limitReached = false } = {}) {
   function dayCell(r, s, started, b) {
     if (b) return bookedCell(b);
     if (started) return '<td class="cell past"><span>—</span></td>';
-    if (canBook() && !limitReached && !outOfRange) {
+    if (canManage() || (canBook() && !limitReached && !outOfRange)) {
       return `<td class="cell free"><button class="btn-book" data-book data-room="${r.id}" data-slot="${s.id}" data-date="${date}">Book</button></td>`;
     }
     return '<td class="cell free"><span>Free</span></td>';
@@ -261,10 +264,11 @@ function dayGrid(date, rs, bookings, { limitReached = false } = {}) {
 }
 
 function bookedCell(b) {
-  if (b.mine) return `<td class="cell mine"><strong>Your booking</strong>${b.purpose ? `<small>${esc(b.purpose)}</small>` : ''}</td>`;
+  const cancelBtn = canManage() ? `<button class="mini danger" data-cancel="${b.id}" title="Cancel booking">Cancel</button>` : '';
+  if (b.mine) return `<td class="cell mine"><strong>Your booking</strong>${b.purpose ? `<small>${esc(b.purpose)}</small>` : ''}${cancelBtn}</td>`;
   if (b.user) {
-    return `<td class="cell booked" title="${esc(b.user.email)}"><strong>${esc(b.user.name)}</strong><small>${esc(b.user.group)}</small>${b.purpose ? `<small>${esc(b.purpose)}</small>` : ''}
-      ${me.role === 'admin' ? `<button class="mini danger" data-cancel="${b.id}" title="Cancel booking">Cancel</button>` : ''}</td>`;
+    return `<td class="cell booked" title="${esc(b.user.email)}${b.bookedBy ? ` (booked by ${esc(b.bookedBy)})` : ''}"><strong>${esc(b.user.name)}</strong><small>${esc(b.user.group)}</small>${b.purpose ? `<small>${esc(b.purpose)}</small>` : ''}
+      ${cancelBtn}</td>`;
   }
   return '<td class="cell booked"><span>Booked</span></td>';
 }
@@ -288,21 +292,33 @@ function bindCancel() {
   });
 }
 
-function openBookModal({ roomId, date, slotId }, rs) {
+async function openBookModal({ roomId, date, slotId }, rs) {
   const room = rs.find((r) => r.id === roomId);
   const slot = getSlot(slotId);
+  const staff = canManage();
+  const owners = staff ? await api.listBookingOwners() : [];
+  const ownerOpt = (u) => `<option value="${u.id}" ${u.id === me.id ? 'selected' : ''}>${esc(u.name)}${u.group ? ` (${esc(u.group)})` : ''}${u.id === me.id ? ' (me)' : ''}</option>`;
+  const byRole = (r) => owners.filter((u) => u.role === r);
+  const ownerField = staff ? `<label class="field">Book for
+      <select name="forUser">
+        <optgroup label="Staff">${[...byRole('teacher'), ...byRole('admin')].map(ownerOpt).join('')}</optgroup>
+        <optgroup label="Students">${byRole('student').map(ownerOpt).join('')}</optgroup>
+      </select><span class="muted small">Staff bookings aren't limited by the student booking rules.</span></label>` : '';
   const m = modal(`<h2>Confirm booking</h2>
     <div class="book-summary"><img src="${esc(room.image)}" alt="">
       <dl class="summary"><dt>Room</dt><dd>${esc(room.name)}</dd><dt>Date</dt><dd>${fmtLong(date)}</dd>
       <dt>Time</dt><dd>${esc(slot.label)}, ${timeLabel(slot)}</dd></dl></div>
-    <label class="field">What will you be practising? <span class="muted">(optional)</span>
-      <input name="purpose" maxlength="80" placeholder="e.g. Grade 5 piano pieces"></label>
+    ${ownerField}
+    <label class="field">${staff ? 'Notes' : 'What will you be practising?'} <span class="muted">(optional)</span>
+      <input name="purpose" maxlength="80" placeholder="${staff ? 'e.g. Choir rehearsal' : 'e.g. Grade 5 piano pieces'}"></label>
     <div class="form-error" hidden></div>
     <div class="modal-actions"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-confirm>Confirm booking</button></div>`);
   const btn = m.querySelector('[data-confirm]');
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Booking…';
-    const res = await api.createBooking({ roomId, date, slotId, purpose: m.querySelector('[name=purpose]').value });
+    const forUserId = m.querySelector('[name=forUser]')?.value;
+    const owner = owners.find((u) => u.id === forUserId);
+    const res = await api.createBooking({ roomId, date, slotId, purpose: m.querySelector('[name=purpose]').value, forUserId });
     if (!res.ok) {
       const err = m.querySelector('.form-error'); err.textContent = res.error; err.hidden = false;
       btn.disabled = false; btn.textContent = 'Confirm booking';
@@ -310,9 +326,10 @@ function openBookModal({ roomId, date, slotId }, rs) {
     }
     m.close();
     const mail = res.email;
-    const done = modal(`<div class="success-icon">✓</div><h2 class="center">You're booked!</h2>
+    const forOther = owner && owner.id !== me.id;
+    const done = modal(`<div class="success-icon">${successNotes()}</div><h2 class="center">${forOther ? `Booked for ${esc(owner.name)}` : "You're booked!"}</h2>
       <p class="center">${esc(room.name)}<br>${fmtLong(date)}, ${timeLabel(slot)}</p>
-      <p class="center muted">${mail.status === 'failed' ? 'The booking is confirmed, but the confirmation email could not be sent.' : `A confirmation email has been sent to <strong>${esc(me.email)}</strong>.`}</p>
+      <p class="center muted">${mail.status === 'failed' ? 'The booking is confirmed, but the confirmation email could not be sent.' : `A confirmation email has been sent to <strong>${esc(mail.to)}</strong>.`}</p>
       <div class="modal-actions center">${EMAIL.provider === 'demo' ? '<button class="btn ghost" data-view-email>View email</button>' : ''}<button class="btn primary" data-close>Done</button></div>`);
     done.querySelector('[data-view-email]')?.addEventListener('click', () => { done.close(); emailModal(mail); });
     done.querySelector('[data-close]').addEventListener('click', () => render());
@@ -344,8 +361,8 @@ async function viewBook({ params }) {
     `<a href="#/book?date=${d}" class="key white ${d === date ? 'active' : ''} ${d === today() ? 'today' : ''}" ${d === date ? 'aria-current="date"' : ''} aria-label="${fmtLong(d)}">
       <span class="key-dow">${fmtShort(d).split(' ')[0]}</span><span class="key-num">${d.slice(8).replace(/^0/, '')}</span><span class="key-mon">${fmtShort(d).split(' ')[2]}</span></a>`).join('');
   $app.innerHTML = `
-    <div class="page-head"><h1>${canBook() ? 'Book a room' : 'Availability'}</h1>
-      <p class="muted">Choose a day, then pick a free slot. Bookings open ${RULES.maxDaysAhead} days ahead.</p></div>
+    <div class="page-head"><h1>${canBook() || canManage() ? 'Book a room' : 'Availability'}</h1>
+      <p class="muted">${canManage() ? 'Choose a day, then pick a free slot to book it for yourself or a student, or cancel an existing booking. To book further ahead, use the weekly room schedules.' : `Choose a day, then pick a free slot. Bookings open ${RULES.maxDaysAhead} days ahead.`}</p></div>
     <nav class="keyboard" aria-label="Choose a day">${strip}</nav>
     <section class="card"><div class="card-head"><h2>${fmtLong(date)}</h2>${legend()}</div>
       ${banner}${dayGrid(date, rs, bookings, { limitReached })}</section>`;
@@ -353,7 +370,7 @@ async function viewBook({ params }) {
   bindCancel();
 }
 
-const legend = () => `<div class="legend"><span><i class="sw free"></i>Free</span><span><i class="sw booked"></i>Booked</span>${canBook() ? '<span><i class="sw mine"></i>Yours</span>' : ''}<span><i class="sw past"></i>Past</span></div>`;
+const legend = () => `<div class="legend"><span><i class="sw free"></i>Free</span><span><i class="sw booked"></i>Booked</span>${canBook() || canManage() ? '<span><i class="sw mine"></i>Yours</span>' : ''}<span><i class="sw past"></i>Past</span></div>`;
 
 // ── Weekly room schedule ─────────────────────────────────────
 async function viewSchedule({ arg, params }) {
@@ -366,7 +383,7 @@ async function viewSchedule({ arg, params }) {
   const now = new Date();
   const last = lastBookableDate();
   const nextWs = addDays(ws, 7);
-  const canNext = nextWs <= last;
+  const canNext = canManage() || nextWs <= last;
 
   const rows = SLOT_GROUPS.map((g) => {
     const cells = days.map((d) => {
@@ -376,7 +393,7 @@ async function viewSchedule({ arg, params }) {
       const time = `<span class="cell-time">${timeLabel(s)}</span>`;
       if (b) return bookedCell(b).replace(/^<td class="([^"]+)"([^>]*)>/, `<td class="$1"$2>${time}`);
       if (atTime(d, s.start) <= now) return `<td class="cell past">${time}<span>—</span></td>`;
-      if (canBook() && d <= last) return `<td class="cell free">${time}<button class="btn-book" data-book data-room="${room.id}" data-slot="${s.id}" data-date="${d}">Book</button></td>`;
+      if (canManage() || (canBook() && d <= last)) return `<td class="cell free">${time}<button class="btn-book" data-book data-room="${room.id}" data-slot="${s.id}" data-date="${d}">Book</button></td>`;
       return `<td class="cell free">${time}<span>Free</span></td>`;
     }).join('');
     return `<tr><th class="slot"><span class="slot-label">${g.label}</span></th>${cells}</tr>`;
@@ -385,8 +402,8 @@ async function viewSchedule({ arg, params }) {
   const listRows = [...bookings].sort(byWhen).map((b) => {
     const s = getSlot(b.slotId);
     return `<tr><td>${fmtShort(b.date)}</td><td>${timeLabel(s)}</td><td>${esc(b.user?.name)}</td><td>${esc(b.user?.group)}</td>
-      <td>${esc(b.user?.email)}</td><td>${esc(b.purpose)}</td><td class="muted">${fmtStamp(b.createdAt)}</td>
-      ${me.role === 'admin' ? `<td><button class="mini danger" data-cancel="${b.id}">Cancel</button></td>` : ''}</tr>`;
+      <td>${esc(b.user?.email)}</td><td>${esc(b.purpose)}</td><td class="muted">${fmtStamp(b.createdAt)}${b.bookedBy ? `<br>by ${esc(b.bookedBy)}` : ''}</td>
+      ${canManage() ? `<td><button class="mini danger" data-cancel="${b.id}">Cancel</button></td>` : ''}</tr>`;
   }).join('');
 
   $app.innerHTML = `
@@ -409,7 +426,7 @@ async function viewSchedule({ arg, params }) {
     </section>
     ${isStaff() ? `<section class="card">
       <div class="card-head"><h2>Who's booked ${esc(room.name)} this week</h2><button class="btn ghost sm" onclick="window.print()">Print</button></div>
-      ${bookings.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Time</th><th>Student</th><th>Year / class</th><th>Email</th><th>Notes</th><th>Booked</th>${me.role === 'admin' ? '<th></th>' : ''}</tr></thead><tbody>${listRows}</tbody></table></div>` : '<p class="empty">No bookings this week.</p>'}
+      ${bookings.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Time</th><th>Booked for</th><th>Year / class</th><th>Email</th><th>Notes</th><th>Booked</th>${canManage() ? '<th></th>' : ''}</tr></thead><tbody>${listRows}</tbody></table></div>` : '<p class="empty">No bookings this week.</p>'}
     </section>` : ''}`;
   bindBookButtons(rs);
   bindCancel();
@@ -450,7 +467,7 @@ async function viewRoom({ arg }) {
         </tbody></table>
         <div class="actions">
           <a class="btn primary" href="#/schedule/${r.id}">View schedule</a>
-          ${canBook() ? '<a class="btn ghost" href="#/book">Book a slot</a>' : ''}
+          ${canBook() || canManage() ? '<a class="btn ghost" href="#/book">Book a slot</a>' : ''}
           ${me.role === 'admin' ? `<a class="btn ghost" href="#/admin/rooms#${r.id}">Edit room info</a>` : ''}
         </div>
       </div>
@@ -486,7 +503,7 @@ async function viewMy() {
   const upcoming = mine.filter((b) => b.status === 'confirmed' && atTime(b.date, getSlot(b.slotId).end) > now).sort(byWhen);
   const history = mine.filter((b) => !upcoming.includes(b)).sort(byWhen).reverse();
   $app.innerHTML = `
-    <div class="page-head"><h1>My bookings</h1><p class="muted">Limits: ${RULES.maxPerDay} per day, ${RULES.maxPerWeek} per week. Cancel bookings you can't use so others can book the room.</p></div>
+    <div class="page-head"><h1>My bookings</h1><p class="muted">${canBook() ? `Limits: ${RULES.maxPerDay} per day, ${RULES.maxPerWeek} per week. ` : ''}Cancel bookings you can't use so others can book the room.</p></div>
     <section class="card"><h2>Upcoming</h2>${upcoming.length ? bookingList(upcoming, rs, { cancel: true }) : '<p class="empty">No upcoming bookings. <a href="#/book">Book a room</a></p>'}</section>
     <section class="card"><h2>Past & cancelled</h2>${history.length ? bookingList(history, rs) : '<p class="empty">Nothing here yet.</p>'}</section>`;
   bindCancel();
@@ -752,6 +769,12 @@ async function viewData() {
 }
 
 // ── Start ────────────────────────────────────────────────────
+// Footer is decorative: create it if the page doesn't have one, and never let it stop the app starting.
+try {
+  let $foot = document.getElementById('footer');
+  if (!$foot) { $foot = document.createElement('footer'); $foot.id = 'footer'; $foot.className = 'footer'; $app.after($foot); }
+  $foot.innerHTML = `<div class="footer-inner">${footerArt()}<p>${esc(APP.school)} · ${esc(APP.name)}</p></div>`;
+} catch (e) { console.warn('Footer not drawn:', e); }
 window.addEventListener('hashchange', render);
 document.addEventListener('click', (e) => { const pop = document.getElementById('userPop'); if (pop && !e.target.closest('.user-menu')) pop.hidden = true; });
 api.init().then(render).catch((e) => {

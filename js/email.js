@@ -36,7 +36,7 @@ async function deliver(msg) {
 const first = (name) => (name || '').split(' ')[0];
 const ref = (b) => b.id.slice(0, 8).toUpperCase();
 
-export function sendBookingConfirmation({ user, booking, room, slot }) {
+export function sendBookingConfirmation({ user, booking, room, slot, bookedBy = null }) {
   const when = `${fmtLong(booking.date)}, ${slot.start}–${slot.end}`;
   return deliver({
     type: 'confirmation', bookingId: booking.id, to: user.email, toName: user.name,
@@ -44,7 +44,7 @@ export function sendBookingConfirmation({ user, booking, room, slot }) {
     body:
 `Hi ${first(user.name)},
 
-Your music room booking is confirmed.
+${bookedBy ? `${bookedBy.name} has booked a music room for you.` : 'Your music room booking is confirmed.'}
 
 Room:  ${room.name}
 Date:  ${fmtLong(booking.date)}

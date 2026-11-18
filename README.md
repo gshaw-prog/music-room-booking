@@ -6,9 +6,11 @@ A web app for students to book music practice rooms and classrooms. It's built t
 
 | | Students | Teachers | Admin |
 |---|:-:|:-:|:-:|
-| Book a room (auto-approved, confirmation email) | ✓ | | |
-| View & cancel own bookings | ✓ | | |
-| Room schedules (weekly view) | ✓ (booker names hidden) | ✓ full details | ✓ full details + cancel |
+| Book a room for yourself (auto-approved, confirmation email) | ✓ within the rules | ✓ no limits | ✓ no limits |
+| Book a room for a student | | ✓ | ✓ |
+| View & cancel own bookings | ✓ | ✓ | ✓ |
+| Cancel any booking | | ✓ | ✓ |
+| Room schedules (weekly view) | ✓ (booker names hidden) | ✓ full details | ✓ full details |
 | Booking details list with print view | | ✓ | ✓ |
 | Room info pages (image + description) | ✓ | ✓ | ✓ edit |
 | Add users, CSV import, assign roles, reset passwords | | | ✓ |
@@ -25,7 +27,7 @@ A web app for students to book music practice rooms and classrooms. It's built t
 | Lunch | 12:45–13:35 | 12:45–13:35 |
 | After school | 15:40–16:00 | 14:40–16:00 |
 
-**Rules:** 1 booking per user per day · 2 per week (Mon–Sun) · up to 14 days ahead · no booking slots that have started · cancelled bookings free up the slot and the quota.
+**Rules (students):** 1 booking per user per day · 2 per week (Mon–Sun) · up to 14 days ahead · no booking slots that have started · cancelled bookings free up the slot and the quota. Teachers and admins aren't bound by these limits but still can't double-book or book a slot that has started (set by `manageRoles` in `js/config.js`).
 
 ## Demo accounts
 

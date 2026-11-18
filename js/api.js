@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────
 import * as store from './store.js';
 import { ROLES } from './config.js';
-import { validateBooking, userQuota, getSlot } from './rules.js';
+import { validateBooking, userQuota, getSlot, canManage } from './rules.js';
 import { atTime, toISO } from './dates.js';
 import * as email from './email.js';
 import { hashPassword, randomSalt, uid, tempPassword } from './crypto.js';
@@ -49,6 +49,7 @@ function shapeBooking(b, viewer) {
     out.purpose = b.purpose || '';
     out.cancelledAt = b.cancelledAt;
     out.user = owner ? { name: owner.name, group: owner.group || '', email: owner.email } : { name: 'Deleted user', group: '', email: '' };
+    if (b.createdBy && b.createdBy !== b.userId) out.bookedBy = findUser(b.createdBy)?.name || 'Staff';
   }
   return out;
 }
@@ -113,13 +114,25 @@ export async function getQuota(date) {
   return userQuota(u.id, date, db().bookings);
 }
 
-export async function createBooking({ roomId, date, slotId, purpose }) {
+/** People staff can book for: everyone, students first. */
+export async function listBookingOwners() {
   const u = requireUser();
+  if (!canManage(u)) throw new Error('You do not have permission to do that.');
+  const order = { student: 0, teacher: 1, admin: 2 };
+  return db().users
+    .map((x) => ({ id: x.id, name: x.name, group: x.group || '', role: x.role }))
+    .sort((a, b) => order[a.role] - order[b.role] || a.name.localeCompare(b.name));
+}
+
+export async function createBooking({ roomId, date, slotId, purpose, forUserId }) {
+  const actor = requireUser();
   const d = db();
-  const v = validateBooking({ user: u, roomId, date, slotId, bookings: d.bookings, rooms: d.rooms });
+  const u = forUserId ? findUser(forUserId) : actor;
+  if (!u) return { ok: false, error: 'Choose who the booking is for.' };
+  const v = validateBooking({ user: u, actor, roomId, date, slotId, bookings: d.bookings, rooms: d.rooms });
   if (!v.ok) return v;
   const booking = {
-    id: uid(), roomId, date, slotId, userId: u.id,
+    id: uid(), roomId, date, slotId, userId: u.id, createdBy: actor.id,
     purpose: String(purpose || '').trim().slice(0, 80),
     status: 'confirmed', // auto-approved
     createdAt: new Date().toISOString(),
@@ -127,8 +140,8 @@ export async function createBooking({ roomId, date, slotId, purpose }) {
   d.bookings.push(booking);
   store.save();
   const room = d.rooms.find((r) => r.id === roomId);
-  const mail = await email.sendBookingConfirmation({ user: u, booking, room, slot: getSlot(slotId) });
-  return { ok: true, booking: shapeBooking(booking, u), email: mail };
+  const mail = await email.sendBookingConfirmation({ user: u, booking, room, slot: getSlot(slotId), bookedBy: u.id !== actor.id ? actor : null });
+  return { ok: true, booking: shapeBooking(booking, actor), email: mail };
 }
 
 export async function cancelBooking(id) {
@@ -137,9 +150,10 @@ export async function cancelBooking(id) {
   const b = d.bookings.find((x) => x.id === id);
   if (!b || b.status !== 'confirmed') return { ok: false, error: 'Booking not found.' };
   const isOwner = b.userId === u.id;
-  if (!isOwner && u.role !== 'admin') return { ok: false, error: 'You can only cancel your own bookings.' };
+  const staff = canManage(u);
+  if (!isOwner && !staff) return { ok: false, error: 'You can only cancel your own bookings.' };
   const slot = getSlot(b.slotId);
-  if (isOwner && u.role !== 'admin' && atTime(b.date, slot.start) <= new Date()) {
+  if (!staff && atTime(b.date, slot.start) <= new Date()) {
     return { ok: false, error: 'This booking has already started.' };
   }
   b.status = 'cancelled';

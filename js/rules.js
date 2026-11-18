@@ -42,13 +42,20 @@ export function userQuota(userId, date, bookings) {
   };
 }
 
+export const canManage = (user) => !!user && RULES.manageRoles.includes(user.role);
+
 /**
  * Validate a booking request. Returns { ok: true } or { ok: false, error }.
+ * `user` is who the booking is for; `actor` is who is making it (defaults to `user`).
+ * Staff (RULES.manageRoles) can book for anyone and skip the daily/weekly limits and
+ * the advance window; nobody can double-book or book a slot that has started.
  */
-export function validateBooking({ user, roomId, date, slotId, bookings, rooms, now = new Date() }) {
+export function validateBooking({ user, actor = user, roomId, date, slotId, bookings, rooms, now = new Date() }) {
   const fail = (error) => ({ ok: false, error });
-  if (!user) return fail('Please sign in to book.');
-  if (!RULES.bookingRoles.includes(user.role)) return fail('Your account type cannot make bookings.');
+  if (!user || !actor) return fail('Please sign in to book.');
+  const staff = canManage(actor);
+  if (!staff && actor.id !== user.id) return fail('You can only make bookings for yourself.');
+  if (!staff && !RULES.bookingRoles.includes(user.role)) return fail('Your account type cannot make bookings.');
   const room = rooms.find((r) => r.id === roomId);
   if (!room) return fail('Unknown room.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return fail('Invalid date.');
@@ -57,12 +64,13 @@ export function validateBooking({ user, roomId, date, slotId, bookings, rooms, n
 
   const today = toISO(now);
   if (date < today || atTime(date, slot.start) <= now) return fail('This time slot has already started or passed.');
-  if (date > addDays(today, RULES.maxDaysAhead)) {
+  if (!staff && date > addDays(today, RULES.maxDaysAhead)) {
     return fail(`Bookings can only be made up to ${RULES.maxDaysAhead} days ahead.`);
   }
   const taken = bookings.some((b) => b.status === 'confirmed' && b.roomId === roomId && b.date === date && b.slotId === slotId);
   if (taken) return fail('Sorry — that room has just been booked for this slot.');
 
+  if (staff) return { ok: true };
   const q = userQuota(user.id, date, bookings);
   if (q.day >= RULES.maxPerDay) return fail(`You can only make ${RULES.maxPerDay} booking per day.`);
   if (q.week >= RULES.maxPerWeek) return fail(`You can only make ${RULES.maxPerWeek} bookings per week.`);

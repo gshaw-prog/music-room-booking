@@ -22,8 +22,32 @@ test('valid booking is accepted', () => {
   assert.equal(validateBooking({ ...base, roomId: 'practice-1', date: '2026-11-16', slotId: 'break' }).ok, true);
 });
 
-test('teachers cannot book', () => {
-  assert.equal(validateBooking({ ...base, user: teacher, roomId: 'practice-1', date: '2026-11-16', slotId: 'break' }).ok, false);
+test('teachers can book for themselves', () => {
+  assert.equal(validateBooking({ ...base, user: teacher, roomId: 'practice-1', date: '2026-11-16', slotId: 'break' }).ok, true);
+});
+
+test('students cannot book for someone else', () => {
+  const other = { id: 's2', role: 'student' };
+  assert.equal(validateBooking({ ...base, user: other, actor: student, roomId: 'practice-1', date: '2026-11-16', slotId: 'break' }).ok, false);
+});
+
+test('staff booking for a student skip the daily/weekly limits and advance window', () => {
+  const admin = { id: 'a1', role: 'admin' };
+  const bookings = [bk({ date: '2026-11-16', slotId: 'early' }), bk({ date: '2026-11-17', slotId: 'early' })];
+  for (const actor of [teacher, admin]) {
+    assert.equal(validateBooking({ ...base, actor, bookings, roomId: 'practice-2', date: '2026-11-16', slotId: 'break' }).ok, true);
+    assert.equal(validateBooking({ ...base, actor, roomId: 'practice-1', date: '2026-12-15', slotId: 'break' }).ok, true);
+  }
+  // …but the same student booking for themselves is still blocked
+  assert.equal(validateBooking({ ...base, bookings, roomId: 'practice-2', date: '2026-11-16', slotId: 'break' }).ok, false);
+  assert.equal(validateBooking({ ...base, roomId: 'practice-1', date: '2026-12-15', slotId: 'break' }).ok, false);
+});
+
+test('staff still cannot double-book or book a started slot', () => {
+  const bookings = [bk({ userId: 's9', date: '2026-11-16', slotId: 'break' })];
+  assert.equal(validateBooking({ ...base, actor: teacher, bookings, roomId: 'practice-1', date: '2026-11-16', slotId: 'break' }).ok, false);
+  const now = new Date(2026, 10, 16, 7, 35);
+  assert.equal(validateBooking({ ...base, actor: teacher, now, roomId: 'practice-1', date: '2026-11-16', slotId: 'early' }).ok, false);
 });
 
 test('wrong slot for weekday is rejected', () => {

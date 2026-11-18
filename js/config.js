@@ -33,7 +33,8 @@ export const RULES = {
   maxPerDay: 1,          // bookings per user per day
   maxPerWeek: 2,         // bookings per user per week (Mon–Sun)
   maxDaysAhead: 14,      // cannot book more than 2 weeks ahead
-  bookingRoles: ['student'], // roles allowed to make bookings
+  bookingRoles: ['student'], // roles that book for themselves, following the rules above
+  manageRoles: ['teacher', 'admin'], // can book for anyone (rules above don't apply) and cancel any booking
   autoApprove: true,     // bookings are confirmed immediately
 };
 
