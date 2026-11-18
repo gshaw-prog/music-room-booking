@@ -1,0 +1,3 @@
+# Personal Claude Code settings (permission rules) — keep off GitHub
+.claude/settings.local.json
+.DS_Store
